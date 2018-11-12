@@ -1,2 +1,2 @@
 #!/bin/sh
-/usr/bin/time -f '%Uu %Ss %er %MkB %C' "$@"
+/usr/bin/time -o /dev/stdout -f '%Uu %Ss %er %MkB %C' "$@"
