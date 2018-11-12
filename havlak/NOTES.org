@@ -1,0 +1,26 @@
+#+TITLE: Profiling Go code
+#+AUTHOR: pancho horrillo
+#+EMAIL: pedrofelipe.horrillo@bbva.com
+#+DATE: 2018-11-14 Wed
+
+* Notes
+- https://github.com/google/pprof/blob/master/doc/README.md
+- https://golang.org/pkg/runtime/pprof/
+- https://github.com/golang/go/wiki/Performance
+- https://blog.golang.org/profiling-go-programs
+- https://storage.googleapis.com/pub-tools-public-publication-data/pdf/37122.pdf
+- https://github.com/rsc/benchgraffiti
+- https://jvns.ca/blog/2017/09/24/profiling-go-with-pprof/
+- https://github.com/google/pprof/pull/188
+- https://github.com/uber/go-torch
+
+* Results:
+#+NAME: v6, C++
+#+BEGIN_SRC sh
+  make havlak6cc.time
+#+END_SRC
+
+#+NAME: v6, Go
+#+BEGIN_SRC sh
+ make havlak6.time
+#+END_SRC
