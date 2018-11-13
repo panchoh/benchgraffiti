@@ -1,26 +1,345 @@
+# -*- org-confirm-babel-evaluate: nil -*-
+#+PROPERTY: header-args:sh :results output verbatim code
+
 #+TITLE: Profiling Go code
 #+AUTHOR: pancho horrillo
 #+EMAIL: pedrofelipe.horrillo@bbva.com
 #+DATE: 2018-11-14 Wed
 
-* Notes
-- https://github.com/google/pprof/blob/master/doc/README.md
-- https://golang.org/pkg/runtime/pprof/
-- https://github.com/golang/go/wiki/Performance
-- https://blog.golang.org/profiling-go-programs
-- https://storage.googleapis.com/pub-tools-public-publication-data/pdf/37122.pdf
-- https://github.com/rsc/benchgraffiti
-- https://jvns.ca/blog/2017/09/24/profiling-go-with-pprof/
-- https://github.com/google/pprof/pull/188
-- https://github.com/uber/go-torch
+** Pandora's box
+*** Early 2011: a [[https://ai.google/research/pubs/pub37122][paper]] is published by googler Robert Hundt comparing the relative performance of ~C++~, ~Java~, ~Go~ and ~Scala~.
+#+DOWNLOADED: /tmp/screenshot.png @ 2018-11-13 22:33:14
+[[file:images/screenshot_2018-11-13_22-33-14.png]]
 
-* Results:
+*** Implements [[https://en.wikipedia.org/wiki/Tarjan%27s_strongly_connected_components_algorithm][Tarjan's strongly connected components algorithm]] in the aforementioned languages.
+#+DOWNLOADED: https://upload.wikimedia.org/wikipedia/commons/6/60/Tarjan%27s_Algorithm_Animation.gif @ 2018-11-13 22:36:31
+[[file:images/Tarjan%2527s_Algorithm_Animation_2018-11-13_22-36-31.gif]]
+
+*** ~C++~ is the clear winner, leaving the others to bite the dust:
+|-----------+------------+--------|
+| Benchmark | Time [sec] | Factor |
+|-----------+------------+--------|
+| C++       |         23 |   1.0x |
+| Java      |         89 |   3.7x |
+| Scala     |         58 |   2.5x |
+| Go        |        126 |   5.5x |
+|-----------+------------+--------|
+
+**** ~Go~ is only faster in build times
+*** After publication of the benchmark internally at Google, several engineers went on to produce highly optimized versions of the benchmark.
+#+DOWNLOADED: http://static-25.sinclairstoryline.com/resources/media/a85120d7-07c1-48c5-9987-a67e65cd3431-large16x9_HENDERSONVILLEATPISGAH.transfer_frame_1239.jpg?1540005910866 @ 2018-11-13 22:19:31
+[[file:images/a85120d7-07c1-48c5-9987-a67e65cd3431-large16x9_HENDERSONVILLEATPISGAH.transfer_frame_1239_2018-11-13_22-19-31.jpeg]]
+
+*** Gopher [[https://twitter.com/_rsc][Russ Cox]] takes the opportunity and produces a [[https://blog.golang.org/profiling-go-programs][step-by-step guide]] on how to profile and optimize the ~Go~ version.
+#+DOWNLOADED: /tmp/screenshot.png @ 2018-11-13 22:39:26
+[[file:images/screenshot_2018-11-13_22-39-26.png]]
+
+**** He also identifies issues in the ~C++~ version and refines it as well
+**** Updated on May 2013 by Shenghou Ma to reflect updates to the ~g++~ and ~go~ compilers.
+*** All the code is available at the [[https://github.com/rsc/benchgraffiti][benchgraffiti repo]].
+#+DOWNLOADED: /tmp/screenshot.png @ 2018-11-13 22:48:02
+[[file:images/screenshot_2018-11-13_22-48-02.png]]
+
+**** I've [[https://github.com/panchoh/benchgraffiti][forked the repo]] to tweak the ~Makefile~ so that it runs with the current toolchain.
+**** Also added [[https://github.com/panchoh/benchgraffiti/blob/fix-makefile/havlak/NOTES.org][these notes]].
+** Profiling
+*** Step 1: Baseline
+#+NAME: v1, C++
+#+BEGIN_SRC sh
+make havlak1cc.time
+#+END_SRC
+
+#+RESULTS: v1, C++
+#+BEGIN_SRC sh
+g++ -O3 -o havlak1cc havlak1.cc
+./xtime ./havlak1cc
+15.50u 0.05s 15.57r 183948kB ./havlak1cc
+rm havlak1cc
+#+END_SRC
+
+#+BEGIN_SRC sh
+g++ -O3 -o havlak1cc havlak1.cc
+./xtime ./havlak1cc
+13.91u 0.03s 13.96r 183916kB ./havlak1cc
+rm havlak1cc
+#+END_SRC
+
+#+NAME: v1, Go
+#+BEGIN_SRC sh
+make havlak1.time
+#+END_SRC
+
+#+RESULTS: v1, Go
+
+#+BEGIN_SRC sh
+go build havlak1.go
+./xtime ./havlak1
+# of loops: 76000 (including 1 artificial root node)
+17.19u 0.11s 12.75r 348412kB ./havlak1
+#+END_SRC
+
+*** Step 2: Add boilerplate to create a CPU profile
+**** Generate a CPU profile
+#+NAME: v1, Go - generate CPU profile
+#+BEGIN_SRC sh
+make havlak1.prof
+#+END_SRC
+
+#+RESULTS: v1, Go - generate CPU profile
+
+#+BEGIN_SRC sh
+./havlak1 -cpuprofile=havlak1.prof
+# of loops: 76000 (including 1 artificial root node)
+#+END_SRC
+
+*** Step 2.1: Examine the CPU profile
+**** CLI
+***** Let's run ~go tool pprof~, a variant of [[https://github.com/gperftools/gperftools][Google's pprof C++ profiler]]:
+#+NAME: v1, Go - running pprof interactively, topN
+#+BEGIN_EXAMPLE
+go tool pprof havlak1 havlak1.prof
+File: havlak1
+Type: cpu
+Time: Nov 14, 2018 at 6:20am (CET)
+Duration: 18.84s, Total samples = 25.80s (136.92%)
+Entering interactive mode (type "help" for commands, "o" for options)
+(pprof) top5 -cum
+Showing nodes accounting for 1.69s, 6.55% of 25.80s total
+Dropped 118 nodes (cum <= 0.13s)
+Showing top 5 nodes out of 73
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%     13.28s 51.47%  main.main
+         0     0%     0%     13.28s 51.47%  runtime.main
+         0     0%     0%     13.20s 51.16%  main.FindHavlakLoops
+     1.65s  6.40%  6.40%     13.20s 51.16%  main.FindLoops
+     0.04s  0.16%  6.55%     10.96s 42.48%  runtime.systemstack
+(pprof)
+#+END_EXAMPLE
+
+**** Static ~SVG~
+#+NAME: v1, Go - running pprof interactively, svg->browser
+#+BEGIN_EXAMPLE
+go tool pprof havlak1 havlak1.prof
+File: havlak1
+Type: cpu
+Time: Nov 14, 2018 at 6:20am (CET)
+Duration: 18.84s, Total samples = 25.80s (136.92%)
+Entering interactive mode (type "help" for commands, "o" for options)
+(pprof) web
+#+END_EXAMPLE
+
+#+DOWNLOADED: /tmp/screenshot.png @ 2018-11-14 06:39:27
+[[file:images/screenshot_2018-11-14_06-39-27.png]]
+
+**** WUI
+#+NAME: v1, Go - running pprof as WUI
+#+BEGIN_SRC sh
+  go tool pprof -http ":8081" havlak1 havlak1.prof
+#+END_SRC
+
+#+DOWNLOADED: /tmp/screenshot.png @ 2018-11-14 07:09:53
+[[file:images/screenshot_2018-11-14_07-09-53.png]]
+
+**** Note the drop-down menus and regex search box at the upper left corner:
+#+DOWNLOADED: /tmp/screenshot.png @ 2018-11-14 07:44:47
+[[file:images/screenshot_2018-11-14_07-44-47.png]]
+
+#+DOWNLOADED: /tmp/screenshot.png @ 2018-11-14 07:47:13
+[[file:images/screenshot_2018-11-14_07-47-13.png]]
+
+**** Let's focus on ~main.DFS~
+
+#+DOWNLOADED: /tmp/screenshot.png @ 2018-11-14 09:15:48
+[[file:images/screenshot_2018-11-14_09-15-48.png]]
+
+**** Under ~VIEW -> SOURCE~ we can see the time spent on each line
+
+#+DOWNLOADED: /tmp/screenshot.png @ 2018-11-14 09:23:23
+[[file:images/screenshot_2018-11-14_09-23-23.png]]
+
+**** Clicking on a line will show the disassembled code
+
+#+DOWNLOADED: /tmp/screenshot.png @ 2018-11-14 09:25:06
+[[file:images/screenshot_2018-11-14_09-25-06.png]]
+*** Step 3: Replace costly map with a cheap list
+#+NAME: v2, Go - measuring time
+#+BEGIN_SRC sh
+make havlak2.time
+#+END_SRC
+
+#+RESULTS: v2, Go - measuring time
+
+#+BEGIN_SRC sh
+go build havlak2.go
+./xtime ./havlak2
+# of loops: 76000 (including 1 artificial root node)
+11.87u 0.13s 7.77r 348212kB ./havlak2
+#+END_SRC
+
+*** Step 3.1: Identify current bottleneck
+**** Running ~pprof~ interactively
+#+NAME: v2, Go - running pprof interactively, topN
+#+BEGIN_EXAMPLE
+go tool pprof havlak2 havlak2.prof
+File: havlak2
+Type: cpu
+Time: Nov 14, 2018 at 9:04am (CET)
+Duration: 11.37s, Total samples = 17.24s (151.67%)
+Entering interactive mode (type "help" for commands, "o" for options)
+(pprof) top10 -cum
+Showing nodes accounting for 5.89s, 34.16% of 17.24s total
+Dropped 100 nodes (cum <= 0.09s)
+Showing top 10 nodes out of 78
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%      9.11s 52.84%  main.main
+         0     0%     0%      9.11s 52.84%  runtime.main
+         0     0%     0%      9.03s 52.38%  main.FindHavlakLoops
+     1.36s  7.89%  7.89%      9.03s 52.38%  main.FindLoops
+     0.03s  0.17%  8.06%      8.88s 51.51%  runtime.systemstack
+         0     0%  8.06%      7.05s 40.89%  runtime.gcBgMarkWorker
+         0     0%  8.06%      7.05s 40.89%  runtime.gcBgMarkWorker.func2
+     0.40s  2.32% 10.38%      7.05s 40.89%  runtime.gcDrain
+     2.67s 15.49% 25.87%      6.82s 39.56%  runtime.scanobject
+     1.43s  8.29% 34.16%      4.28s 24.83%  runtime.mallocgc
+(pprof)
+#+END_EXAMPLE
+
+***** ~runtime.mallocgc~ is the current suspect
+*** Step 4: Add boilerplate to create a memory profile
+**** Generate a memory profile
+#+NAME: v3, Go - generate memory profile
+#+BEGIN_SRC sh
+make havlak3.mprof
+#+END_SRC
+
+#+RESULTS: v3, Go - generate memory profile
+
+#+BEGIN_SRC sh
+./havlak3 -memprofile=havlak3.mprof
+#+END_SRC
+
+*** Step 4.1: Examine the memory profile
+**** Running ~pprof~ interactively
+#+BEGIN_EXAMPLE
+go tool pprof havlak3 havlak3.mprof
+File: havlak3
+Type: inuse_space
+Time: Nov 14, 2018 at 12:09pm (CET)
+Entering interactive mode (type "help" for commands, "o" for options)
+(pprof) top5
+Showing nodes accounting for 32.01MB, 100% of 32.01MB total
+Showing top 5 nodes out of 13
+      flat  flat%   sum%        cum   cum%
+      15MB 46.87% 46.87%       15MB 46.87%  main.NewBasicBlock (inline)
+    9.72MB 30.36% 77.22%     9.72MB 30.36%  main.FindLoops
+       3MB  9.37% 86.60%        3MB  9.37%  main.(*BasicBlock).AddInEdge
+    2.29MB  7.16% 93.75%    17.29MB 54.02%  main.(*CFG).CreateNode
+       2MB  6.25%   100%        2MB  6.25%  main.(*BasicBlock).AddOutEdge
+(pprof) list FindLoops
+Total: 32.01MB
+ROUTINE ======================== main.FindLoops in /home/pancho/go/src/github.com/rsc/benchgraffiti/havlak/havlak3.go
+    9.72MB     9.72MB (flat, cum) 30.36% of Total
+         .          .    263:		return
+         .          .    264:	}
+         .          .    265:
+         .          .    266:	size := cfgraph.NumNodes()
+         .          .    267:
+    1.97MB     1.97MB    268:	nonBackPreds := make([]map[int]bool, size)
+    5.77MB     5.77MB    269:	backPreds := make([][]int, size)
+         .          .    270:
+    1.97MB     1.97MB    271:	number := make([]int, size)
+         .          .    272:	header := make([]int, size, size)
+         .          .    273:	types := make([]int, size, size)
+         .          .    274:	last := make([]int, size, size)
+         .          .    275:	nodes := make([]*UnionFindNode, size, size)
+         .          .    276:
+(pprof)
+#+END_EXAMPLE
+**** Running ~pprof~ interactively
+***** We see a different behaviour from the original article!
+#+BEGIN_EXAMPLE
+go tool pprof --inuse_objects havlak3 havlak3.mprof
+File: havlak3
+Type: inuse_objects
+Time: Nov 14, 2018 at 12:09pm (CET)
+Entering interactive mode (type "help" for commands, "o" for options)
+(pprof) list FindLoops
+Total: 606227
+ROUTINE ======================== main.FindLoops in /home/pancho/go/src/github.com/rsc/benchgraffiti/havlak/havlak3.go
+         3          3 (flat, cum) 0.00049% of Total
+         .          .    263:		return
+         .          .    264:	}
+         .          .    265:
+         .          .    266:	size := cfgraph.NumNodes()
+         .          .    267:
+         1          1    268:	nonBackPreds := make([]map[int]bool, size)
+         1          1    269:	backPreds := make([][]int, size)
+         .          .    270:
+         1          1    271:	number := make([]int, size)
+         .          .    272:	header := make([]int, size, size)
+         .          .    273:	types := make([]int, size, size)
+         .          .    274:	last := make([]int, size, size)
+         .          .    275:	nodes := make([]*UnionFindNode, size, size)
+         .          .    276:
+(pprof)
+#+END_EXAMPLE
+
+***** The author keeps refining the ~Go~ version, implementing caches to reduce memory allocation and garbage collection
+***** Then he backports the changes to the ~C++~ version
+** Results:
+#+NAME: v1, C++ (again)
+#+BEGIN_SRC sh
+make havlak1cc.time
+#+END_SRC
+
+#+RESULTS: v1, C++ (again)
+
+#+BEGIN_SRC sh
+g++ -O3 -o havlak1cc havlak1.cc
+./xtime ./havlak1cc
+15.32u 0.03s 15.37r 183912kB ./havlak1cc
+rm havlak1cc
+#+END_SRC
+
 #+NAME: v6, C++
 #+BEGIN_SRC sh
-  make havlak6cc.time
+make havlak6cc.time
+#+END_SRC
+
+#+RESULTS: v6, C++
+
+#+BEGIN_SRC sh
+g++ -O3 -o havlak6cc havlak6.cc
+./xtime ./havlak6cc
+# of loops: 76000 (including 1 artificial root node)
+1.35u 0.09s 1.45r 98804kB ./havlak6cc
+rm havlak6cc
 #+END_SRC
 
 #+NAME: v6, Go
 #+BEGIN_SRC sh
- make havlak6.time
+make havlak6.time
 #+END_SRC
+
+#+RESULTS: v6, Go
+
+#+BEGIN_SRC sh
+go build havlak6.go
+./xtime ./havlak6
+# of loops: 76000 (including 1 artificial root node)
+1.27u 0.02s 1.22r 98960kB ./havlak6
+#+END_SRC
+
+** References
+ - https://github.com/google/pprof/blob/master/doc/README.md
+ - https://golang.org/pkg/runtime/pprof/
+ - https://github.com/golang/go/wiki/Performance
+ - https://blog.golang.org/profiling-go-programs
+
+ - https://ai.google/research/pubs/pub37122
+ - https://storage.googleapis.com/pub-tools-public-publication-data/pdf/37122.pdf
+
+ - https://github.com/rsc/benchgraffiti
+ - https://jvns.ca/blog/2017/09/24/profiling-go-with-pprof/
+ - https://github.com/google/pprof/pull/188
+ - https://github.com/uber/go-torch
